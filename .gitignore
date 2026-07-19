@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Environment variables & secrets
+.env
+server/.env
+
+# Temporary scratch folder
+scratch/
+
+# Local IDE configuration
+.vscode/
+.gemini/
+.agents/
+.antigravity-ide/
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
