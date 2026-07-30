@@ -1,6 +1,7 @@
 import Product from '../models/Product.js';
 import PriceHistory from '../models/PriceHistory.js';
 import { searchAndCompareProducts } from '../services/scraperService.js';
+import { getRecommendedProducts } from '../services/geminiService.js';
 
 // @desc    Search and compare products across stores
 // @route   GET /api/products/search
@@ -105,6 +106,90 @@ export const deleteProduct = async (req, res, next) => {
       res.status(404);
       throw new Error('Product not found');
     }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get smart product recommendations for a product
+// @route   GET /api/products/:id/recommendations
+// @access  Public
+export const getProductRecommendations = async (req, res, next) => {
+  try {
+    const targetProduct = await Product.findById(req.params.id);
+    if (!targetProduct) {
+      res.status(404);
+      throw new Error('Product not found');
+    }
+
+    // Get up to 10 potential matching candidates from the database (exclude current product)
+    // Try to find items in same category first, fallback to any other product
+    let candidates = await Product.find({
+      _id: { $ne: targetProduct._id },
+      category: targetProduct.category
+    }).limit(10);
+
+    if (candidates.length === 0) {
+      candidates = await Product.find({
+        _id: { $ne: targetProduct._id }
+      }).limit(10);
+    }
+
+    if (candidates.length === 0) {
+      return res.json({ success: true, count: 0, recommendations: [] });
+    }
+
+    // Call Gemini Service for recommendations
+    let aiRecs = null;
+    try {
+      aiRecs = await getRecommendedProducts(targetProduct, candidates);
+    } catch (err) {
+      console.error('Gemini recommendation query failed, falling back to local reasoning:', err);
+    }
+
+    let recommendations = [];
+
+    if (aiRecs && Array.isArray(aiRecs)) {
+      // Build recommendation array by matching IDs returned from Gemini
+      for (const rec of aiRecs) {
+        const matchedProd = candidates.find(c => c._id.toString() === rec.id);
+        if (matchedProd) {
+          recommendations.push({
+            product: matchedProd,
+            reason: rec.reason
+          });
+        }
+      }
+    }
+
+    // Local fallback if Gemini fails or is not configured
+    if (recommendations.length === 0) {
+      // Pick top 3 candidates sorted by rating/reviews or proximity in price
+      const sortedCandidates = [...candidates].sort((a, b) => {
+        // Sort by same brand first
+        if (a.brand === targetProduct.brand && b.brand !== targetProduct.brand) return -1;
+        if (b.brand === targetProduct.brand && a.brand !== targetProduct.brand) return 1;
+        // Then by rating
+        return b.rating - a.rating;
+      }).slice(0, 3);
+
+      recommendations = sortedCandidates.map(c => {
+        let reason = '';
+        if (c.brand === targetProduct.brand) {
+          reason = `A premium model alternative from the same brand, ${c.brand}.`;
+        } else if (c.lowestPrice < targetProduct.lowestPrice) {
+          reason = `A more budget-friendly choice in the ${c.category} category.`;
+        } else {
+          reason = `Top-rated alternative with a customer score of ⭐ ${c.rating}/5.`;
+        }
+        return {
+          product: c,
+          reason
+        };
+      });
+    }
+
+    res.json({ success: true, count: recommendations.length, recommendations });
   } catch (error) {
     next(error);
   }

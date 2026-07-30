@@ -36,6 +36,8 @@ const ProductDetails = () => {
   
   const [isAlertOpen, setIsAlertOpen] = useState(false);
   const [isWishlisted, setIsWishlisted] = useState(false);
+  const [recommendations, setRecommendations] = useState([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(true);
 
   // 1. Fetch Product details and price history
   const fetchProductDetails = async () => {
@@ -69,9 +71,24 @@ const ProductDetails = () => {
     }
   };
 
+  const fetchRecommendations = async () => {
+    try {
+      setRecommendationsLoading(true);
+      const res = await API.get(`/products/${id}/recommendations`);
+      if (res.data.success) {
+        setRecommendations(res.data.recommendations);
+      }
+    } catch (error) {
+      console.error('Error fetching recommendations:', error);
+    } finally {
+      setRecommendationsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (id) {
       fetchProductDetails();
+      fetchRecommendations();
     }
   }, [id, isAuthenticated]);
 
@@ -353,6 +370,87 @@ const ProductDetails = () => {
             </ul>
           </div>
         </div>
+      </section>
+
+      {/* Row 5: AI Recommendations */}
+      <section className="space-y-6">
+        <div>
+          <h2 className="text-lg md:text-xl font-black font-display text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <Sparkles className="text-brand-primary" size={20} />
+            Smart Product Alternatives
+          </h2>
+          <p className="text-xs text-slate-400 font-semibold">AI-recommended complementary or alternative choices from our catalog</p>
+        </div>
+
+        {recommendationsLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="glass-card border border-slate-200/40 dark:border-slate-800/40 rounded-3xl p-5 h-72 animate-pulse bg-slate-800/5 dark:bg-slate-800/10" />
+            ))}
+          </div>
+        ) : recommendations.length === 0 ? (
+          <div className="text-center py-8 border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl bg-slate-50/5 dark:bg-slate-900/5">
+            <p className="text-xs text-slate-450">No recommendations found for this product category.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {recommendations.map(({ product: recProd, reason }) => {
+              const recBestOffer = recProd.listings && recProd.listings.length > 0
+                ? [...recProd.listings].sort((a, b) => a.price - b.price)[0]
+                : null;
+              
+              return (
+                <div 
+                  key={recProd._id}
+                  onClick={() => navigate(`/products/${recProd._id}`)}
+                  className="glass-card border border-slate-200/60 dark:border-slate-800/40 rounded-3xl p-5 hover:scale-[1.02] hover:shadow-xl hover:border-brand-primary/40 dark:hover:border-brand-primary/45 transition-all flex flex-col justify-between cursor-pointer text-left bg-white/5 dark:bg-slate-900/5"
+                >
+                  <div className="space-y-4">
+                    <div className="w-full h-36 rounded-2xl overflow-hidden bg-white dark:bg-slate-950/20 p-2 flex items-center justify-center">
+                      <img 
+                        src={recProd.image || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=800&auto=format&fit=crop'} 
+                        alt={recProd.name} 
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{recProd.brand}</span>
+                      <h4 className="text-sm font-black text-slate-800 dark:text-slate-100 line-clamp-1">{recProd.name}</h4>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      {recBestOffer ? (
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-base font-black text-slate-800 dark:text-white">
+                            ₹{recBestOffer.price.toLocaleString()}
+                          </span>
+                          <span className="text-xs line-through text-slate-450">
+                            ₹{recBestOffer.originalPrice.toLocaleString()}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">Pricing unavailable</span>
+                      )}
+
+                      <div className="flex items-center gap-0.5 text-xs text-amber-500 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">
+                        <Star size={10} className="fill-current" />
+                        {recProd.rating}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 p-3 rounded-2xl bg-gradient-to-tr from-brand-primary/5 to-indigo-500/5 dark:from-brand-primary/10 dark:to-indigo-500/10 border border-brand-primary/10 dark:border-brand-primary/15 flex items-start gap-2">
+                    <Sparkles size={14} className="text-brand-primary mt-0.5 shrink-0" />
+                    <p className="text-[11px] leading-relaxed text-slate-650 dark:text-slate-300 font-medium">
+                      {reason}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* Alert modal sheet */}

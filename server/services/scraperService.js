@@ -169,6 +169,20 @@ const PLATFORMS_BY_CATEGORY = {
   Default: ['Amazon', 'Flipkart', 'Meesho']
 };
 
+// Helper for generating correct search URLs per store
+const getStoreSearchUrl = (storeName, keyword) => {
+  const store = storeName.toLowerCase().replace(' ', '');
+  const encoded = encodeURIComponent(keyword);
+  if (store === 'amazon') return `https://www.amazon.in/s?k=${encoded}`;
+  if (store === 'flipkart') return `https://www.flipkart.com/search?q=${encoded}`;
+  if (store === 'myntra') return `https://www.myntra.com/${encoded}`;
+  if (store === 'nykaa') return `https://www.nykaa.com/search/result/?q=${encoded}`;
+  if (store === 'croma') return `https://www.croma.com/search/?q=${encoded}`;
+  if (store === 'reliancedigital') return `https://www.reliancedigital.in/search?q=${encoded}`;
+  if (store === 'ajio') return `https://www.ajio.com/search/?text=${encoded}`;
+  return `https://www.${store}.com/search?q=${encoded}`;
+};
+
 // Generate realistic store listings for a product
 const generateListings = (basePrice, category, name) => {
   const platforms = PLATFORMS_BY_CATEGORY[category] || PLATFORMS_BY_CATEGORY.Default;
@@ -205,7 +219,7 @@ const generateListings = (basePrice, category, name) => {
 
     return {
       storeName: store,
-      url: `https://www.${store.toLowerCase().replace(' ', '')}.com/search?q=${encodeURIComponent(name)}`,
+      url: getStoreSearchUrl(store, name),
       price,
       originalPrice,
       discountPercentage,
@@ -340,7 +354,7 @@ const fetchFromSerpApi = async (keyword) => {
 
         return {
           storeName: store,
-          url: realMatch.link || `https://www.${store.toLowerCase().replace(' ', '')}.com/search?q=${encodeURIComponent(keyword)}`,
+          url: realMatch.link || getStoreSearchUrl(store, keyword),
           price: cleanPrice,
           originalPrice,
           discountPercentage,
@@ -372,7 +386,7 @@ const fetchFromSerpApi = async (keyword) => {
 
         return {
           storeName: store,
-          url: `https://www.${store.toLowerCase().replace(' ', '')}.com/search?q=${encodeURIComponent(keyword)}`,
+          url: getStoreSearchUrl(store, keyword),
           price,
           originalPrice,
           discountPercentage,
@@ -495,11 +509,10 @@ export const searchAndCompareProducts = async (keyword) => {
       createdProducts.push(newProduct);
     }
   } else {
-    // 4. Fully dynamic fallback: if user searches something we don't have, we dynamically construct a new mockup product
+    // 4. Fully dynamic fallback: if user searches something we don't have, we dynamically construct 3 mockup products
     // to give them a functional comparison experience!
     const fallbackName = keyword.charAt(0).toUpperCase() + keyword.slice(1);
-    const brands = ['EcoSmart', 'Apex', 'Nova', 'Horizon', 'Elite'];
-    const brand = brands[Math.floor(Math.random() * brands.length)];
+    const brands = ['EcoSmart', 'Apex', 'Nova', 'Horizon', 'Elite', 'Apple', 'Samsung', 'Sony'];
     
     // Try to guess category based on search terms
     let category = 'Electronics';
@@ -508,8 +521,6 @@ export const searchAndCompareProducts = async (keyword) => {
     } else if (['cream', 'soap', 'shampoo', 'skin', 'makeup', 'face', 'lip', 'wash', 'scrub', 'gel', 'serum', 'oil', 'cleanser', 'lotion', 'toner', 'perfume'].some(w => cleanedKeyword.includes(w))) {
       category = 'Beauty';
     }
-    
-    const basePrice = Math.round(150 + Math.random() * 50000); // broad range
     
     // Choose appropriate image placeholder from Unsplash based on category and sub-keywords
     let image = 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=800&auto=format&fit=crop'; // Default: smartwatch
@@ -536,30 +547,62 @@ export const searchAndCompareProducts = async (keyword) => {
       }
     }
 
-    const listings = generateListings(basePrice, category, fallbackName);
-    const avgRating = parseFloat((listings.reduce((sum, l) => sum + l.rating, 0) / listings.length).toFixed(1));
-    const totalReviews = listings.reduce((sum, l) => sum + l.reviewsCount, 0);
+    const suffixes = ['', ' Pro', ' Max', ' Ultra', ' Plus', ' Essential'];
 
-    const dynamicProduct = new Product({
-      name: `${brand} ${fallbackName}`,
-      brand: brand,
-      category: category,
-      description: `Premium quality ${fallbackName} designed for high-durability and performance by ${brand}.`,
-      image: image,
-      specs: {
-        'Brand': brand,
-        'Origin': 'Made with sustainable materials',
-        'In Box': '1 Unit, User Guide, Warranty Card',
-        'Customer Support': '24/7 Helpline available'
-      },
-      rating: avgRating,
-      reviewsCount: totalReviews,
-      listings: listings
-    });
+    // Generate 3 variations
+    for (let i = 0; i < 3; i++) {
+      const brand = brands[Math.floor(Math.random() * brands.length)];
+      const suffix = i === 0 ? '' : suffixes[Math.floor(Math.random() * (suffixes.length - 1)) + 1];
+      
+      let basePrice = 5000;
+      if (category === 'Electronics') {
+        if (['phone', 'mobile', 'samsung', 'iphone', 'pixel', 'oneplus'].some(w => cleanedKeyword.includes(w))) {
+          basePrice = Math.round(40000 + Math.random() * 80000); // 40k to 120k for phones
+        } else if (['laptop', 'macbook', 'dell', 'hp'].some(w => cleanedKeyword.includes(w))) {
+          basePrice = Math.round(50000 + Math.random() * 100000); // 50k to 150k for laptops
+        } else {
+          basePrice = Math.round(2000 + Math.random() * 15000); // Accessories
+        }
+      } else if (category === 'Fashion') {
+        basePrice = Math.round(500 + Math.random() * 4000);
+      } else if (category === 'Beauty') {
+        basePrice = Math.round(200 + Math.random() * 1500);
+      }
+      
+      // slightly vary price for each iteration
+      basePrice = Math.round(basePrice * (1 + (Math.random() * 0.2 - 0.1)));
 
-    await dynamicProduct.save();
-    await generatePriceHistory(dynamicProduct._id, listings);
-    createdProducts.push(dynamicProduct);
+      const listings = generateListings(basePrice, category, fallbackName);
+      const avgRating = parseFloat((listings.reduce((sum, l) => sum + l.rating, 0) / listings.length).toFixed(1));
+      const totalReviews = listings.reduce((sum, l) => sum + l.reviewsCount, 0);
+
+      // determine correct brand name formatting if it's apple
+      let nameStr = `${brand} ${fallbackName}${suffix}`;
+      if (cleanedKeyword.includes('iphone') && !nameStr.toLowerCase().includes('apple')) {
+         nameStr = `Apple ${fallbackName}${suffix}`;
+      }
+
+      const dynamicProduct = new Product({
+        name: nameStr,
+        brand: brand,
+        category: category,
+        description: `Premium quality ${fallbackName} designed for high-durability and performance.`,
+        image: image,
+        specs: {
+          'Brand': brand,
+          'Origin': 'Made with sustainable materials',
+          'In Box': '1 Unit, User Guide, Warranty Card',
+          'Customer Support': '24/7 Helpline available'
+        },
+        rating: avgRating,
+        reviewsCount: totalReviews,
+        listings: listings
+      });
+
+      await dynamicProduct.save();
+      await generatePriceHistory(dynamicProduct._id, listings);
+      createdProducts.push(dynamicProduct);
+    }
   }
 
   return createdProducts;

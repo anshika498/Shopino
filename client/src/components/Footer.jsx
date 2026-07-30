@@ -36,7 +36,6 @@ const Footer = () => {
         </div>
 
         <div className="border-t border-slate-100 dark:border-slate-800/40 pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400">
-          <p>© {new Date().getFullYear()} Shopino Inc. All rights reserved.</p>
         </div>
       </div>
     </footer>

@@ -4,7 +4,7 @@ import { answerShoppingQuery } from '../services/geminiService.js';
 // @route   POST /api/ai/chat
 // @access  Public (or Private depending on choice. We make it public for easier trial)
 export const chatWithAI = async (req, res, next) => {
-  const { message, context } = req.body;
+  const { message, context, chatHistory } = req.body;
 
   try {
     if (!message) {
@@ -12,7 +12,7 @@ export const chatWithAI = async (req, res, next) => {
       throw new Error('Please provide a message');
     }
 
-    const reply = await answerShoppingQuery(message, context || {});
+    const reply = await answerShoppingQuery(message, context || {}, chatHistory || []);
     res.json({ success: true, reply });
   } catch (error) {
     next(error);

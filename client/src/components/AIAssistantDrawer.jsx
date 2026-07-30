@@ -45,7 +45,7 @@ const parseMarkdown = (text) => {
         // Skip separator row |---|---|
         if (cols[0] && cols[0].includes('---')) return;
         
-        tableHtml += '<tr class="border-b border-slate-200 dark:border-slate-850 hover:bg-slate-100/50 dark:hover:bg-slate-900/40">';
+        tableHtml += '<tr class="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-100/50 dark:hover:bg-slate-900/40">';
         cols.forEach((col) => {
           tableHtml += `<td class="py-2 px-3 text-slate-700 dark:text-slate-300 font-medium">${col}</td>`;
         });
@@ -135,7 +135,8 @@ const AIAssistantDrawer = () => {
 
       const { data } = await API.post('/ai/chat', {
         message: text,
-        context
+        context,
+        chatHistory: messages.map(m => ({ role: m.sender === 'ai' ? 'model' : 'user', text: m.text }))
       });
 
       if (data.success) {
@@ -223,7 +224,7 @@ const AIAssistantDrawer = () => {
                   <div 
                     className={`p-3.5 rounded-2xl text-xs leading-relaxed text-left ${
                       isAI 
-                        ? 'bg-slate-50 dark:bg-slate-850 text-slate-700 dark:text-slate-350 rounded-tl-none border border-slate-100 dark:border-slate-800/40' 
+                        ? 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-tl-none border border-slate-100 dark:border-slate-700/50' 
                         : 'bg-brand-primary/10 border border-brand-primary/15 text-slate-800 dark:text-slate-100 rounded-tr-none'
                     }`}
                     dangerouslySetInnerHTML={{ __html: parseMarkdown(m.text) }}
@@ -242,7 +243,7 @@ const AIAssistantDrawer = () => {
               <div className="w-7 h-7 rounded-full bg-brand-primary/10 text-brand-primary flex items-center justify-center text-xs shrink-0">
                 <Sparkles size={12} className="animate-spin-slow" />
               </div>
-              <div className="bg-slate-50 dark:bg-slate-850 p-4 rounded-2xl rounded-tl-none border border-slate-100 dark:border-slate-800/40">
+              <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-2xl rounded-tl-none border border-slate-100 dark:border-slate-700/50">
                 <div className="flex space-x-1.5 items-center">
                   <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                   <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -264,7 +265,7 @@ const AIAssistantDrawer = () => {
                 <button
                   key={prompt}
                   onClick={() => handleSendMessage(prompt)}
-                  className="w-full text-left p-2.5 rounded-xl border border-slate-100 dark:border-slate-850/60 bg-slate-50/50 hover:bg-brand-primary/5 dark:bg-slate-900/30 hover:border-brand-primary/30 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-all flex items-center justify-between group cursor-pointer"
+                  className="w-full text-left p-2.5 rounded-xl border border-slate-100 dark:border-slate-800/60 bg-slate-50/50 hover:bg-brand-primary/5 dark:bg-slate-900/30 hover:border-brand-primary/30 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-all flex items-center justify-between group cursor-pointer"
                 >
                   {prompt}
                   <ArrowRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-brand-primary" />

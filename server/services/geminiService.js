@@ -94,15 +94,95 @@ Here is a side-by-side assessment of the products:
   return `I have analyzed your search. Let me know if you want me to compare prices or give you details on any specific product in your context list!`;
 };
 
-// Answer customer queries using Google Gemini
-export const answerShoppingQuery = async (query, userContext = {}) => {
-  const client = getGeminiClient();
+// Mock Policy Document for RAG
+const MOCK_POLICY_DOCUMENT = `
+Shopino Policies & FAQ:
+1. Return Policy: You can return most items within 30 days of delivery. Electronics have a 14-day return window. Items must be in original condition.
+2. Shipping: Standard shipping takes 3-5 business days. Expedited shipping takes 1-2 days. Free shipping on orders over ₹1000.
+3. Refunds: Refunds are processed within 5-7 business days after the returned item is received.
+4. Warranty: Most electronics come with a 1-year manufacturer warranty. Check product details for specifics.
+5. Price Match: Shopino automatically finds the lowest prices across Amazon, Flipkart, etc. We do not price match outside these platforms.
+6. Support: Contact support@shopino.com for help.
+`;
+
+// Semantic Router: Classify Intent
+const classifyQuery = async (query, client) => {
+  if (!client) return 'PRODUCT_SEARCH';
+  const prompt = `Classify the following user query into one of three categories:
+1. CHITCHAT: General conversation, greetings, how are you, thanks, ok, etc.
+2. POLICY_SEARCH: Questions about returns, shipping, refunds, warranty, or company policies.
+3. PRODUCT_SEARCH: Questions about buying, prices, product features, comparisons, finding deals, or anything related to shopping for items.
+
+Query: "${query}"
+
+Respond with ONLY ONE WORD: CHITCHAT, POLICY_SEARCH, or PRODUCT_SEARCH.`;
   
-  // 1. Gather product context from database to pass to LLM
-  // We search for products mentioned or related to user queries
+  try {
+    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    let text = result.response.text().trim().toUpperCase();
+    
+    // Clean up any potential markdown or extra punctuation
+    text = text.replace(/[^A-Z_]/g, '');
+    
+    if (['CHITCHAT', 'POLICY_SEARCH', 'PRODUCT_SEARCH'].includes(text)) {
+      console.log(`[Semantic Router] Classified query as: ${text}`);
+      return text;
+    }
+    return 'PRODUCT_SEARCH';
+  } catch (error) {
+    console.error('[Semantic Router] Error classifying, falling back to PRODUCT_SEARCH');
+    return 'PRODUCT_SEARCH';
+  }
+};
+
+// Chitchat Handler
+const handleChitchat = async (query, chatHistory, client) => {
+  if (!client) return "Hello! I'm Shopino AI. How can I help you today?";
+  const historyText = chatHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+  const prompt = `You are a friendly Shopino Shopping Assistant. Respond to the user's chitchat naturally and nicely. Keep it brief.
+Chat History:
+${historyText}
+User: ${query}
+Assistant:`;
+  
+  try {
+    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (err) {
+    return "Hello! I'm your Shopino assistant.";
+  }
+};
+
+// Policy Search Handler (Mock RAG)
+const handlePolicySearch = async (query, chatHistory, client) => {
+  if (!client) return "Please check our Help Center for policies.";
+  const historyText = chatHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+  const prompt = `You are the Shopino Support Assistant. Answer the user's question using ONLY the policy document below. If the answer is not in the document, say you don't know and direct them to support@shopino.com.
+
+Policy Document:
+${MOCK_POLICY_DOCUMENT}
+
+Chat History:
+${historyText}
+
+User Question: ${query}
+Answer:`;
+  
+  try {
+    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (err) {
+    return "I cannot fetch the policy right now. Please email support@shopino.com.";
+  }
+};
+
+// Product Search Handler
+const handleProductSearch = async (query, userContext, chatHistory, client) => {
+  // 1. Gather product context from database
   let contextProducts = [];
-  
-  // Try to find if any products are in user context (e.g. current page product or search results)
   try {
     if (userContext.productId) {
       const prod = await Product.findById(userContext.productId);
@@ -116,70 +196,63 @@ export const answerShoppingQuery = async (query, userContext = {}) => {
       }).limit(3);
     }
 
-    // If we still have no context, check if query contains any known brand or product names
+    // Try finding products by query words (excluding generic words to avoid random matches)
     if (contextProducts.length === 0) {
-      contextProducts = await Product.find({
-        $or: [
-          { name: { $regex: query.split(' ').slice(0, 3).join('|'), $options: 'i' } },
-          { brand: { $regex: query.split(' ').slice(0, 2).join('|'), $options: 'i' } }
-        ]
-      }).limit(3);
+      // Very basic keyword extraction for demo purposes
+      const words = query.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(' ').filter(w => w.length > 3 && !['what', 'where', 'best', 'cheap', 'show', 'find'].includes(w));
+      if (words.length > 0) {
+        contextProducts = await Product.find({
+          $or: [
+            { name: { $regex: words.slice(0, 3).join('|'), $options: 'i' } },
+            { brand: { $regex: words.slice(0, 2).join('|'), $options: 'i' } },
+            { category: { $regex: words.slice(0, 2).join('|'), $options: 'i' } }
+          ]
+        }).limit(3);
+      }
     }
   } catch (error) {
     console.error('Database connection inactive, skipping context products lookup:', error);
   }
 
-  // 2. If no Gemini client is initialized, fallback to rule-based answers
   if (!client) {
     return generateFallbackResponse(query, contextProducts);
   }
 
-  // 3. Format product details for LLM context
+  // 2. Format product details
   const productsFormatted = contextProducts.map(p => {
     return {
       name: p.name,
       brand: p.brand,
       category: p.category,
-      description: p.description,
       rating: p.rating,
-      reviewsCount: p.reviewsCount,
-      specs: p.specs,
+      lowestPrice: p.lowestPrice,
       listings: p.listings.map(l => ({
         store: l.storeName,
         price: l.price,
-        originalPrice: l.originalPrice,
-        discount: l.discountPercentage,
-        coupon: l.couponCode,
-        cashback: l.cashback,
-        deliveryTime: l.deliveryTime,
-        deliveryCharges: l.deliveryCharges,
-        inStock: l.inStock
-      })),
-      lowestPrice: p.lowestPrice,
-      bestRatedStore: p.bestRatedStore,
-      fastestDeliveryStore: p.fastestDeliveryStore,
-      bestOverallDealStore: p.bestOverallDealStore
+        discount: l.discountPercentage
+      }))
     };
   });
 
-  // 4. Construct AI prompt
-  const prompt = `
-You are Shopino Assistant, an expert, objective shopping advisor. Your goal is to help users find the best deals, compare items, analyze ratings and review summaries, and decide whether to buy or wait.
+  const historyText = chatHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+
+  // 3. Construct AI prompt with conversational memory
+  const prompt = `You are Shopino Assistant, an expert shopping advisor. Help users find best deals, compare items, and decide.
 
 Context Products data from database:
 ${JSON.stringify(productsFormatted, null, 2)}
+
+Chat History:
+${historyText}
 
 User Question: "${query}"
 
 Guidelines:
 - Give a friendly, conversational, and direct response.
-- Use bullet points, bold headers, and structured lists where helpful.
-- When recommending a deal, explicitly cite the store name, the price (in Rupees using ₹ symbol), any discount, and why it's the best choice.
-- Keep the response response concise (under 250 words) and directly focused on the user's question.
-- Do not make up prices that are not in the context list. If no product matches in the context, guide the user on how they can search for products on the Shopino platform first.
-`;
+- Rely heavily on the context products. If a product was mentioned in Chat History, assume the user is still talking about it.
+- Keep the response concise (under 200 words).
+- If no context products match and history has no relevant product, guide the user to search the platform.`;
 
-  // Try multiple models to bypass deprecation/quota/404 errors
   const modelOptions = [
     'gemini-3.5-flash',
     'gemini-3.1-flash-lite',
@@ -187,19 +260,108 @@ Guidelines:
     'gemini-2.0-flash',
     'gemini-1.5-flash'
   ];
+  
   let apiError = null;
-
   for (const modelName of modelOptions) {
     try {
       const model = client.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
       return result.response.text();
     } catch (err) {
-      console.error(`Gemini call with ${modelName} failed:`, err.message || err);
+      console.error(`Gemini product search with ${modelName} failed:`, err.message || err);
       apiError = err;
     }
   }
 
-  // If all models failed, use local fallback advisor
-  return `*(Gemini API encountered an error: ${apiError?.message || 'Quota exceeded/Access blocked'}. Falling back to local advisor)*\n\n` + generateFallbackResponse(query, contextProducts);
+  return `*(Gemini API error: ${apiError?.message}). Falling back to local advisor.*\n\n` + generateFallbackResponse(query, contextProducts);
+};
+
+// Answer customer queries using Google Gemini (Main Orchestrator)
+export const answerShoppingQuery = async (query, userContext = {}, chatHistory = []) => {
+  const client = getGeminiClient();
+  
+  // 1. Route the query using our Semantic Router
+  const intent = await classifyQuery(query, client);
+  
+  // 2. Delegate to the specific handler based on intent classification
+  switch (intent) {
+    case 'CHITCHAT':
+      return handleChitchat(query, chatHistory, client);
+      
+    case 'POLICY_SEARCH':
+      return handlePolicySearch(query, chatHistory, client);
+      
+    case 'PRODUCT_SEARCH':
+    default:
+      return handleProductSearch(query, userContext, chatHistory, client);
+  }
+};
+
+// Recommend related or alternative products using Gemini
+export const getRecommendedProducts = async (targetProduct, candidates) => {
+  const client = getGeminiClient();
+  if (!client) return null;
+
+  const candidatesFormatted = candidates.map(c => ({
+    id: c._id.toString(),
+    name: c.name,
+    brand: c.brand,
+    category: c.category,
+    description: c.description,
+    price: c.lowestPrice || (c.listings && c.listings[0] ? c.listings[0].price : 0)
+  }));
+
+  const prompt = `
+You are Shopino AI Recommendation Assistant.
+Given a target product, recommend the top 3 best matching options from the candidate products list.
+These can be direct alternatives (similar products) or complementary items.
+
+Target Product:
+Name: \${targetProduct.name}
+Brand: \${targetProduct.brand}
+Category: \${targetProduct.category}
+Description: \${targetProduct.description}
+Price: \${targetProduct.lowestPrice || (targetProduct.listings && targetProduct.listings[0] ? targetProduct.listings[0].price : 0)}
+
+Candidate Products:
+\${JSON.stringify(candidatesFormatted, null, 2)}
+
+Instructions:
+1. Select exactly 3 products (or fewer if fewer candidates are provided) from the Candidate Products list.
+2. For each recommended product, write a single-sentence recommendation reasoning explaining why it matches/recommends relative to the Target Product (e.g. "A budget-friendly option from \${targetProduct.brand}", or "A high-end alternative with similar specifications").
+3. Return ONLY a valid JSON array of objects, with no markdown code fence or extra text. Each object must have these exact keys:
+   - "id": (string, must exactly match the candidate's id)
+   - "reason": (string, 1-sentence recommendation reason)
+
+Format:
+[
+  { "id": "candidate_id_1", "reason": "Reason why candidate 1 is recommended." },
+  ...
+]
+`;
+
+  const modelOptions = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-3.5-flash'
+  ];
+
+  for (const modelName of modelOptions) {
+    try {
+      const model = client.getGenerativeModel({ 
+        model: modelName,
+        generationConfig: { responseMimeType: 'application/json' }
+      });
+      const result = await model.generateContent(prompt);
+      let text = result.response.text().trim();
+      if (text.startsWith('```')) {
+        text = text.replace(/^```json\s*/, '').replace(/```$/, '').trim();
+      }
+      return JSON.parse(text);
+    } catch (err) {
+      console.error(`Gemini recommendation call with ${modelName} failed:`, err.message || err);
+    }
+  }
+  return null;
 };
