@@ -1,8 +1,9 @@
 # Shopino – AI-Powered Price Comparison & Aggregators Platform
- 
+
+**🌟 Live Demo**: [https://shopino.vercel.app](https://shopino.vercel.app) (Replace with your actual Vercel URL)
+**⚙️ Live API**: `https://shopino-qmdf.onrender.com/api`
 
 Instead of visiting multiple platforms individually, users search once on Shopino and compare prices, delivery estimates, discount percentages, cashbacks, coupon codes, and seller ratings side-by-side. Additionally, users can toggle a detailed **Comparison Matrix** (comparing up to 3 products side-by-side), set **Price Drop Alerts**, and consult our **AI Shopping Assistant** powered by Google Gemini.
-
 ---
 ## Technical Stack
 
