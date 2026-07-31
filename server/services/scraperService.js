@@ -169,18 +169,18 @@ const PLATFORMS_BY_CATEGORY = {
   Default: ['Amazon', 'Flipkart', 'Meesho']
 };
 
-// Helper for generating correct search URLs per store
+// Helper for generating correct product URLs per store using Google's "I'm Feeling Lucky"
 const getStoreSearchUrl = (storeName, keyword) => {
   const store = storeName.toLowerCase().replace(' ', '');
   const encoded = encodeURIComponent(keyword);
-  if (store === 'amazon') return `https://www.amazon.in/s?k=${encoded}`;
-  if (store === 'flipkart') return `https://www.flipkart.com/search?q=${encoded}`;
-  if (store === 'myntra') return `https://www.myntra.com/${encoded}`;
-  if (store === 'nykaa') return `https://www.nykaa.com/search/result/?q=${encoded}`;
-  if (store === 'croma') return `https://www.croma.com/search/?q=${encoded}`;
-  if (store === 'reliancedigital') return `https://www.reliancedigital.in/search?q=${encoded}`;
-  if (store === 'ajio') return `https://www.ajio.com/search/?text=${encoded}`;
-  return `https://www.${store}.com/search?q=${encoded}`;
+  
+  // Determine the correct domain for the store
+  let domain = `${store}.com`;
+  if (store === 'amazon') domain = 'amazon.in';
+  if (store === 'reliancedigital') domain = 'reliancedigital.in';
+  
+  // Use Google's 'I'm Feeling Lucky' (btnI=1) to jump directly to the exact product page on the store's domain
+  return `https://www.google.com/search?q=site:${domain}+${encoded}&btnI=1`;
 };
 
 // Generate realistic store listings for a product
@@ -299,17 +299,42 @@ const fetchFromSerpApi = async (keyword) => {
     const shoppingResults = data.shopping_results || [];
     if (shoppingResults.length === 0) return null;
 
-    // Find the first valid (non-monthly/non-installment) item as base anchor
-    const validFirstItem = shoppingResults.find(item => {
+    // Calculate median price to filter out extreme outliers (like cheap accessories or samples)
+    const validPrices = shoppingResults
+      .map(item => item.extracted_price ? item.extracted_price : parsePriceString(item.price))
+      .filter(p => p > 0)
+      .sort((a, b) => a - b);
+    
+    let medianPrice = 0;
+    if (validPrices.length > 0) {
+      medianPrice = validPrices[Math.floor(validPrices.length / 2)];
+    }
+
+    // Filter valid items (non-monthly/non-installment) and reasonable prices
+    const validItems = shoppingResults.filter(item => {
       const isMonthly = item.price && /\b(mo|month|monthly|yr|year)\b/i.test(item.price);
       const isInstallment = item.title && (/\b(contract|installment|subscription|rent)\b/i.test(item.title));
-      return !isMonthly && !isInstallment;
-    }) || shoppingResults[0];
+      
+      let p = item.extracted_price ? item.extracted_price : parsePriceString(item.price);
+      
+      let isTooCheap = false;
+      // Filter out items that are less than 20% of the median price (likely fakes/accessories/samples)
+      if (medianPrice > 0 && p < medianPrice * 0.20) {
+          isTooCheap = true;
+      }
+      // Strict filter for laptops to avoid accessories
+      if (keyword.toLowerCase().includes('laptop') && p > 0 && p < 15000) {
+          isTooCheap = true;
+      }
+      return !isMonthly && !isInstallment && !isTooCheap;
+    });
 
-    const firstItem = validFirstItem;
-    const brandName = firstItem.brand || keyword.split(' ')[0] || 'Generic';
-    
-    // Guess category
+    const itemsToProcess = validItems.slice(0, 4); // Take up to 4 items
+    if (itemsToProcess.length === 0) return null;
+
+    const createdProducts = [];
+
+    // Guess category once based on keyword
     const cleanedKeyword = keyword.toLowerCase();
     let category = 'Electronics';
     if (['shoe', 'shirt', 'dress', 'jeans', 'bag', 'wear', 'nike', 'adidas', 'pant', 'jacket', 'tshirt', 'socks'].some(w => cleanedKeyword.includes(w))) {
@@ -318,119 +343,124 @@ const fetchFromSerpApi = async (keyword) => {
       category = 'Beauty';
     }
 
-    // Process listings: Ensure all major platforms for the category are present
     const platforms = PLATFORMS_BY_CATEGORY[category] || PLATFORMS_BY_CATEGORY.Default;
 
-    const listings = platforms.map((store, index) => {
-      // 1. Look for a matching store in the real Google Shopping search results that is NOT a monthly contract
-      const realMatch = shoppingResults.find(item => {
-        if (!item.source || !item.source.toLowerCase().includes(store.toLowerCase().replace(' ', ''))) {
-          return false;
-        }
-        const isMonthly = item.price && /\b(mo|month|monthly|yr|year)\b/i.test(item.price);
-        const isInstallment = item.title && (/\b(contract|installment|subscription|rent)\b/i.test(item.title));
-        return !isMonthly && !isInstallment;
-      });
-
-      if (realMatch) {
-        // Use real values from SerpApi Shopping results
-        const cleanPrice = realMatch.extracted_price 
-          ? Math.round(realMatch.extracted_price)
-          : parsePriceString(realMatch.price);
-        
-        const originalPriceText = realMatch.original_price || '';
-        // Randomize original price offset if not present to generate natural, store-varying discounts (9%-20%)
-        const originalPrice = originalPriceText 
-          ? (parsePriceString(originalPriceText) || Math.round(cleanPrice * (1.10 + Math.random() * 0.15)))
-          : Math.round(cleanPrice * (1.10 + Math.random() * 0.15));
-          
-        const discountPercentage = originalPrice > cleanPrice 
-          ? Math.round(((originalPrice - cleanPrice) / originalPrice) * 100)
-          : 0;
-
-        const deliveryText = realMatch.delivery || '3-5 days';
-        const deliveryTime = deliveryText.toLowerCase().includes('tomorrow') ? 'Tomorrow' : deliveryText;
-        const deliveryCharges = deliveryText.toLowerCase().includes('free') ? 0 : 49;
-
-        return {
-          storeName: store,
-          url: realMatch.link || getStoreSearchUrl(store, keyword),
-          price: cleanPrice,
-          originalPrice,
-          discountPercentage,
-          couponCode: index % 2 === 0 ? `DEAL${10 + index * 5}` : '',
-          cashback: index === 0 ? '5% CashBack' : '',
-          deliveryCharges,
-          deliveryTime,
-          rating: realMatch.rating || parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
-          reviewsCount: realMatch.reviews || Math.round(50 + Math.random() * 200),
-          sellerRating: parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
-          warranty: '1 Year Manufacturer Warranty',
-          inStock: true
-        };
-      } else {
-        // 2. If the store is missing from the search results, dynamically construct a listing 
-        // anchored to the first item's price, ensuring the platform is compared!
-        const basePriceVal = firstItem.extracted_price 
-          ? Math.round(firstItem.extracted_price)
-          : parsePriceString(firstItem.price);
-        
-        // Variance factor (-7% to +4%)
-        const varianceFactor = 0.93 + (index * 0.015) + (Math.random() * 0.02);
-        const price = Math.round(basePriceVal * varianceFactor);
-        // Vary MRP multiplier (8%-20%) so fallback listings don't display identical discount percentages
-        const originalPrice = Math.round(price * (1.08 + Math.random() * 0.12));
-        const discountPercentage = Math.round(((originalPrice - price) / originalPrice) * 100);
-
-        const deliveryDays = Math.ceil(Math.random() * 4) + 1;
-
-        return {
-          storeName: store,
-          url: getStoreSearchUrl(store, keyword),
-          price,
-          originalPrice,
-          discountPercentage,
-          couponCode: index % 2 === 0 ? `OFFER${5 + index * 5}` : '',
-          cashback: index === 0 ? 'Flat 5% cashback' : '',
-          deliveryCharges: Math.random() > 0.5 ? 50 : 0,
-          deliveryTime: `In ${deliveryDays} days`,
-          rating: parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
-          reviewsCount: Math.round(50 + Math.random() * 1000),
-          sellerRating: parseFloat((3.8 + Math.random() * 1.1).toFixed(1)),
-          warranty: '1 Year Manufacturer Warranty',
-          inStock: true
-        };
-      }
-    });
-
-    const name = firstItem.title || `${brandName} ${keyword}`;
-    let product = await Product.findOne({ name });
-    
-    if (!product) {
-      product = new Product({
-        name,
-        brand: brandName,
-        category,
-        description: `Live price comparison aggregator for ${name} compiled in real-time from Google Shopping.`,
-        image: firstItem.thumbnail || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=800&auto=format&fit=crop',
-        specs: {
-          'Brand': brandName,
-          'Source': 'Google Shopping Live API',
-          'Sellers Count': `${listings.length} active stores`
-        },
-        rating: parseFloat((listings.reduce((sum, l) => sum + l.rating, 0) / listings.length).toFixed(1)),
-        reviewsCount: listings.reduce((sum, l) => sum + l.reviewsCount, 0),
-        listings
-      });
+    for (const item of itemsToProcess) {
+      const brandName = item.brand || keyword.split(' ')[0] || 'Generic';
       
-      await product.save();
-      await generatePriceHistory(product._id, listings);
-    } else {
-      product.listings = listings;
-      await product.save();
+      const listings = platforms.map((store, index) => {
+        // 1. Look for a matching store in the real Google Shopping search results that is NOT a monthly contract
+        const realMatch = shoppingResults.find(r => {
+          if (!r.source || !r.source.toLowerCase().includes(store.toLowerCase().replace(' ', ''))) {
+            return false;
+          }
+          const isMonthly = r.price && /\b(mo|month|monthly|yr|year)\b/i.test(r.price);
+          const isInstallment = r.title && (/\b(contract|installment|subscription|rent)\b/i.test(r.title));
+          return !isMonthly && !isInstallment;
+        });
+
+        if (realMatch) {
+          // Use real values from SerpApi Shopping results
+          const cleanPrice = realMatch.extracted_price 
+            ? Math.round(realMatch.extracted_price)
+            : parsePriceString(realMatch.price);
+          
+          const originalPriceText = realMatch.original_price || '';
+          // Randomize original price offset if not present to generate natural, store-varying discounts (9%-20%)
+          const originalPrice = originalPriceText 
+            ? (parsePriceString(originalPriceText) || Math.round(cleanPrice * (1.10 + Math.random() * 0.15)))
+            : Math.round(cleanPrice * (1.10 + Math.random() * 0.15));
+            
+          const discountPercentage = originalPrice > cleanPrice 
+            ? Math.round(((originalPrice - cleanPrice) / originalPrice) * 100)
+            : 0;
+
+          const deliveryText = realMatch.delivery || '3-5 days';
+          const deliveryTime = deliveryText.toLowerCase().includes('tomorrow') ? 'Tomorrow' : deliveryText;
+          const deliveryCharges = deliveryText.toLowerCase().includes('free') ? 0 : 49;
+
+          return {
+            storeName: store,
+            url: realMatch.link || getStoreSearchUrl(store, item.title || keyword),
+            price: cleanPrice,
+            originalPrice,
+            discountPercentage,
+            couponCode: index % 2 === 0 ? `DEAL${10 + index * 5}` : '',
+            cashback: index === 0 ? '5% CashBack' : '',
+            deliveryCharges,
+            deliveryTime,
+            rating: realMatch.rating || parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
+            reviewsCount: realMatch.reviews || Math.round(50 + Math.random() * 200),
+            sellerRating: parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
+            warranty: '1 Year Manufacturer Warranty',
+            inStock: true
+          };
+        } else {
+          // 2. If the store is missing from the search results, dynamically construct a listing 
+          // anchored to the current item's price, ensuring the platform is compared!
+          const basePriceVal = item.extracted_price 
+            ? Math.round(item.extracted_price)
+            : parsePriceString(item.price);
+          
+          // Variance factor (-7% to +4%)
+          const varianceFactor = 0.93 + (index * 0.015) + (Math.random() * 0.02);
+          const price = Math.round(basePriceVal * varianceFactor);
+          // Vary MRP multiplier (8%-20%) so fallback listings don't display identical discount percentages
+          const originalPrice = Math.round(price * (1.08 + Math.random() * 0.12));
+          const discountPercentage = Math.round(((originalPrice - price) / originalPrice) * 100);
+
+          const deliveryDays = Math.ceil(Math.random() * 4) + 1;
+
+          return {
+            storeName: store,
+            url: getStoreSearchUrl(store, item.title || keyword),
+            price,
+            originalPrice,
+            discountPercentage,
+            couponCode: index % 2 === 0 ? `OFFER${5 + index * 5}` : '',
+            cashback: index === 0 ? 'Flat 5% cashback' : '',
+            deliveryCharges: Math.random() > 0.5 ? 50 : 0,
+            deliveryTime: `In ${deliveryDays} days`,
+            rating: parseFloat((4.0 + Math.random() * 0.9).toFixed(1)),
+            reviewsCount: Math.round(50 + Math.random() * 1000),
+            sellerRating: parseFloat((3.8 + Math.random() * 1.1).toFixed(1)),
+            warranty: '1 Year Manufacturer Warranty',
+            inStock: true
+          };
+        }
+      });
+
+      const name = item.title || `${brandName} ${keyword}`;
+      let product = await Product.findOne({ name });
+      
+      if (!product) {
+        product = new Product({
+          name,
+          brand: brandName,
+          category,
+          description: `Live price comparison aggregator for ${name} compiled in real-time from Google Shopping.`,
+          image: item.thumbnail || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=800&auto=format&fit=crop',
+          specs: {
+            'Brand': brandName,
+            'Source': 'Google Shopping Live API',
+            'Sellers Count': `${listings.length} active stores`
+          },
+          rating: parseFloat((listings.reduce((sum, l) => sum + l.rating, 0) / listings.length).toFixed(1)),
+          reviewsCount: listings.reduce((sum, l) => sum + l.reviewsCount, 0),
+          listings
+        });
+        
+        await product.save();
+        await generatePriceHistory(product._id, listings);
+      } else {
+        product.listings = listings;
+        await product.save();
+      }
+      
+      createdProducts.push(product);
     }
     
-    return [product];
+    return createdProducts;
   } catch (error) {
     console.error('Failed to query SerpApi search:', error);
     return null;
@@ -441,15 +471,7 @@ const fetchFromSerpApi = async (keyword) => {
 export const searchAndCompareProducts = async (keyword) => {
   const cleanedKeyword = keyword.trim().toLowerCase();
   
-  // 1. Try to fetch live data using SerpApi if key is configured
-  if (process.env.SERPAPI_KEY) {
-    const liveProducts = await fetchFromSerpApi(keyword);
-    if (liveProducts && liveProducts.length > 0) {
-      return liveProducts;
-    }
-  }
-  
-  // 2. Search in local database first (regex match)
+  // 1. Search in local database first (regex match)
   let products = await Product.find({
     $or: [
       { name: { $regex: cleanedKeyword, $options: 'i' } },
@@ -458,9 +480,17 @@ export const searchAndCompareProducts = async (keyword) => {
     ]
   });
 
-  // 3. If products exist, return them
+  // If products exist, return them immediately for blazing fast search
   if (products.length > 0) {
     return products;
+  }
+  
+  // 2. Try to fetch live data using SerpApi if key is configured
+  if (process.env.SERPAPI_KEY) {
+    const liveProducts = await fetchFromSerpApi(keyword);
+    if (liveProducts && liveProducts.length > 0) {
+      return liveProducts;
+    }
   }
 
   // 3. If not found, match against our POPULAR_PRODUCTS list or generate a dynamic search result
