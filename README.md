@@ -19,7 +19,7 @@ Instead of visiting multiple platforms individually, users search once on Shopin
 - **Runtime**: Node.js & Express.js
 - **Database**: MongoDB & Mongoose (Schema validation, query filters, composite unique indexes)
 - **Security**: JWT Authentication (JSON Web Tokens), BCrypt.js (Password hashing)
-- **AI Engine**: Google Generative AI (Gemini 1.5/2.5 Flash API with intelligent rule-based local fallbacks if API keys are absent)
+- **AI Engine**: Google Generative AI (Gemini 1.5 Flash API) implementing **RAG (Retrieval-Augmented Generation)** with **Semantic Routing** to dynamically query MongoDB and inject live product context into prompts. Includes intelligent rule-based local fallbacks if API keys are absent.
 
 ---
 
@@ -106,6 +106,6 @@ Open your browser and navigate to the address shown (usually `http://localhost:5
 3. **Comparison Matrix**: Click **Add to Compare** on up to 3 products, then click **Compare** on the navbar or results panel. A spec-sheet matrix evaluates sizes, weights, details, and price ranges side-by-side.
 4. **Price Drop Alerts**: Sign up and log in. Click **Price Drop Alert** on a product details page. Set your target price threshold. The alert records under your **User Dashboard**.
 5. **Interactive Recharts**: View historical trends over 7, 30, or 90 days. Line curves depict fluctuations and holiday sale dips.
-6. **Gemini Shopping Assistant**: Open the **Ask AI** drawer from the navbar. Input comparisons (e.g. `Compare iPhone 16 and Galaxy S25`) or ask for buy-time suggestions. The agent reads data context directly from the MongoDB product listings.
+6. **AI Shopping Assistant (RAG Pipeline)**: Open the **Ask AI** drawer from the navbar. Uses **Semantic Routing** to classify intent (Product vs Policy) and performs **Retrieval-Augmented Generation (RAG)** by fetching real-time database context (pricing, specs) to inject into the Gemini prompt for highly accurate, hallucination-free advice.
 7. **Wishlists & Profile Management**: Bookmark favorites into your personal wishlist and update settings in real-time.
 8. **Admin Panel**: Registered administrators can view global statistics charts and view registered user profiles.
